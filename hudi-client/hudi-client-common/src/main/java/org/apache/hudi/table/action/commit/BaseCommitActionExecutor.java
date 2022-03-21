@@ -279,7 +279,7 @@ public abstract class BaseCommitActionExecutor<T extends HoodieRecordPayload, I,
    * We can also make these validations in BaseCommitActionExecutor to reuse pre-commit hooks for multiple actions.
    */
   private void validateWriteResult(HoodieClusteringPlan clusteringPlan, HoodieWriteMetadata<HoodieData<WriteStatus>> writeMetadata) {
-    if (writeMetadata.getWriteStatuses().isEmpty()) {
+    if (!writeMetadata.getWriteStats().isPresent()) {
       throw new HoodieClusteringException("Clustering plan produced 0 WriteStatus for " + instantTime
           + " #groups: " + clusteringPlan.getInputGroups().size() + " expected at least "
           + clusteringPlan.getInputGroups().stream().mapToInt(HoodieClusteringGroup::getNumOutputFileGroups).sum()

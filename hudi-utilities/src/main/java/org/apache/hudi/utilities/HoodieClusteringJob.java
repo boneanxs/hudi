@@ -143,6 +143,7 @@ public class HoodieClusteringJob {
       LOG.info(resultMsg + " success");
     }
     jsc.stop();
+    System.exit(result);
   }
 
   // make sure that cfg.runningMode couldn't be null

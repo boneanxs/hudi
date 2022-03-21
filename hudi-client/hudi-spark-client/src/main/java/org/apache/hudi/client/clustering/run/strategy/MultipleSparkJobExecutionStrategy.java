@@ -22,6 +22,8 @@ import org.apache.avro.Schema;
 import org.apache.avro.generic.GenericRecord;
 import org.apache.avro.generic.IndexedRecord;
 import org.apache.hadoop.fs.Path;
+import org.apache.hudi.AvroConversionUtils;
+import org.apache.hudi.HoodieSparkUtils;
 import org.apache.hudi.avro.HoodieAvroUtils;
 import org.apache.hudi.avro.model.HoodieClusteringGroup;
 import org.apache.hudi.avro.model.HoodieClusteringPlan;
@@ -32,6 +34,7 @@ import org.apache.hudi.client.utils.ConcatenatingIterator;
 import org.apache.hudi.common.config.SerializableConfiguration;
 import org.apache.hudi.common.data.HoodieData;
 import org.apache.hudi.common.engine.HoodieEngineContext;
+import org.apache.hudi.common.fs.FSUtils;
 import org.apache.hudi.common.model.ClusteringOperation;
 import org.apache.hudi.common.model.HoodieAvroRecord;
 import org.apache.hudi.common.model.HoodieFileGroupId;
@@ -66,6 +69,10 @@ import org.apache.log4j.LogManager;
 import org.apache.log4j.Logger;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
+import org.apache.spark.sql.Dataset;
+import org.apache.spark.sql.Row;
+import org.apache.spark.sql.SQLContext;
+import scala.Tuple2;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -76,6 +83,8 @@ import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import static org.apache.hudi.common.model.HoodieFileFormat.ORC;
+import static org.apache.hudi.common.model.HoodieFileFormat.PARQUET;
 import static org.apache.hudi.common.table.log.HoodieFileSliceReader.getFileSliceReader;
 import static org.apache.hudi.config.HoodieClusteringConfig.PLAN_STRATEGY_SORT_COLUMNS;
 
@@ -250,23 +259,27 @@ public abstract class MultipleSparkJobExecutionStrategy<T extends HoodieRecordPa
 
     // NOTE: It's crucial to make sure that we don't capture whole "this" object into the
     //       closure, as this might lead to issues attempting to serialize its nested fields
-    return jsc.parallelize(clusteringOps, clusteringOps.size())
-        .mapPartitions(clusteringOpsPartition -> {
-          List<Iterator<IndexedRecord>> iteratorsForPartition = new ArrayList<>();
-          clusteringOpsPartition.forEachRemaining(clusteringOp -> {
-            try {
-              Schema readerSchema = HoodieAvroUtils.addMetadataFields(new Schema.Parser().parse(writeConfig.getSchema()));
-              HoodieFileReader<IndexedRecord> baseFileReader = HoodieFileReaderFactory.getFileReader(hadoopConf.get(), new Path(clusteringOp.getDataFilePath()));
-              iteratorsForPartition.add(baseFileReader.getRecordIterator(readerSchema));
-            } catch (IOException e) {
-              throw new HoodieClusteringException("Error reading input data for " + clusteringOp.getDataFilePath()
-                  + " and " + clusteringOp.getDeltaFilePaths(), e);
-            }
-          });
+    String[] dataFilePaths = clusteringOps.stream()
+            .map(ClusteringOperation::getDataFilePath)
+            .toArray(String[]::new);
+    SQLContext sqlContext = new SQLContext(jsc.sc());
 
-          return new ConcatenatingIterator<>(iteratorsForPartition);
-        })
-        .map(record -> transform(record, writeConfig));
+    Dataset<Row> inputFrame;
+
+    final String extension = FSUtils.getFileExtension(dataFilePaths[0]);
+    if (PARQUET.getFileExtension().equals(extension)) {
+      inputFrame = sqlContext.read().format("parquet").load(dataFilePaths);
+    } else if (ORC.getFileExtension().equals(extension)) {
+      inputFrame = sqlContext.read().format("orc").load(dataFilePaths);
+    } else {
+      throw new IllegalArgumentException("Not supported");
+    }
+
+    Tuple2<String, String> avroRecordNameAndNamespace =
+            AvroConversionUtils.getAvroRecordNameAndNamespace(writeConfig.getTableName());
+    return  HoodieSparkUtils.createRdd(inputFrame, avroRecordNameAndNamespace._1, avroRecordNameAndNamespace._2,
+            scala.Option.apply(HoodieAvroUtils.addMetadataFields(new Schema.Parser().parse(writeConfig.getSchema()))))
+             .toJavaRDD().map(record -> transform(record, writeConfig));
   }
 
   /**

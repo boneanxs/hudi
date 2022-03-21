@@ -772,6 +772,11 @@ class TestHoodieSparkSqlWriter {
     }
   }
 
+  @Test
+  def testDifferentView(): Unit = {
+
+  }
+
   /**
    * Test case for deletion of partitions.
    * @param usePartitionsToDeleteConfig Flag for if use partitions to delete config
