@@ -217,7 +217,7 @@ abstract class HoodieBaseRelation(val sqlContext: SQLContext,
   // NOTE: We're including compaction here since it's not considering a "commit" operation
     metaClient.getCommitsAndCompactionTimeline.filterCompletedInstants
 
-  protected val validCommits = timeline.getInstants.toArray().map(_.asInstanceOf[HoodieInstant].getFileName).mkString(",")
+  protected lazy val validCommits = timeline.getInstants.toArray().map(_.asInstanceOf[HoodieInstant].getFileName).mkString(",")
 
   protected def latestInstant: Option[HoodieInstant] =
     toScalaOption(timeline.lastInstant())
